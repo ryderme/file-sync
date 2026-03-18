@@ -4,32 +4,42 @@ set -uo pipefail
 # ── Default config ─────────────────────────────────────────────────────────────
 VPS_HOST=""
 VPS_USER="ubuntu"
-VPS_PATH="~/outputs/images"
+VPS_PATH="~/outputs/files"
 SSH_KEY="$HOME/.ssh/id_ed25519"
-LOCAL_DIR="$HOME/uploads/images"
+LOCAL_DIR="$HOME/uploads/files"
+FILE_TYPES=""   # 留空则同步所有文件，否则填逗号分隔的后缀，如 "png,jpg,pdf"
 
 # Load user config (overrides defaults)
-CONFIG_FILE="$HOME/.image-sync.conf"
+CONFIG_FILE="$HOME/.file-sync.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 UPLOADED_LOG="$LOCAL_DIR/.uploaded"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-log() { echo "[image-sync] $*"; }
-err() { echo "[image-sync] ERROR: $*" >&2; exit 1; }
+log() { echo "[file-sync] $*"; }
+err() { echo "[file-sync] ERROR: $*" >&2; exit 1; }
 
 check_config() {
-  [[ -z "$VPS_HOST" ]] && err "VPS_HOST not set. Create $CONFIG_FILE (see image-sync.conf.example)"
+  [[ -z "$VPS_HOST" ]] && err "VPS_HOST not set. Create $CONFIG_FILE (see file-sync.conf.example)"
   mkdir -p "$LOCAL_DIR"
   touch "$UPLOADED_LOG"
 }
 
-find_images() {
-  find "$LOCAL_DIR" -maxdepth 1 -type f \( \
-    -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" \
-    -o -iname "*.gif" -o -iname "*.webp" -o -iname "*.heic" \
-    -o -iname "*.svg" -o -iname "*.bmp" \
-  \) -print0
+find_files() {
+  if [[ -z "$FILE_TYPES" ]]; then
+    # 同步所有文件
+    find "$LOCAL_DIR" -maxdepth 1 -type f ! -name ".*" -print0
+  else
+    # 按配置的后缀过滤
+    local args=()
+    IFS=',' read -ra exts <<< "$FILE_TYPES"
+    for i in "${!exts[@]}"; do
+      local ext="${exts[$i]// /}"
+      [[ $i -gt 0 ]] && args+=("-o")
+      args+=("-iname" "*.${ext}")
+    done
+    find "$LOCAL_DIR" -maxdepth 1 -type f \( "${args[@]}" \) -print0
+  fi
 }
 
 # ── Rename ─────────────────────────────────────────────────────────────────────
@@ -39,11 +49,12 @@ rename_files() {
   while IFS= read -r -d '' file; do
     local name
     name=$(basename "$file")
-    local ext="${name##*.}"
-    ext="${ext,,}"  # lowercase extension
 
     # Skip already renamed (starts with YYYYMMDD_HHMMSS)
     [[ "$name" =~ ^[0-9]{8}_[0-9]{6} ]] && continue
+
+    local ext="${name##*.}"
+    ext="${ext,,}"  # lowercase extension
 
     # Use file modification time as timestamp
     local ts
@@ -61,7 +72,7 @@ rename_files() {
     mv "$file" "$LOCAL_DIR/$newname"
     log "renamed: $name → $newname"
     renamed=$((renamed + 1))
-  done < <(find_images)
+  done < <(find_files)
 
   [[ $renamed -gt 0 ]] && log "renamed $renamed file(s)" || log "no files to rename"
 }
@@ -86,7 +97,7 @@ upload_files() {
       log "failed: $name"
       failed=$((failed + 1))
     fi
-  done < <(find_images)
+  done < <(find_files)
 
   [[ $uploaded -gt 0 ]] && log "uploaded $uploaded file(s)"
   [[ $failed -gt 0 ]] && log "failed $failed file(s)"
@@ -116,9 +127,9 @@ case "${1:-sync}" in
   sync)  sync_all ;;
   watch) watch_mode ;;
   *)
-    echo "Usage: image-sync [sync|watch]"
+    echo "Usage: file-sync [sync|watch]"
     echo ""
-    echo "  sync   rename + upload new images (default)"
+    echo "  sync   rename + upload new files (default)"
     echo "  watch  auto-sync when new files are added"
     ;;
 esac

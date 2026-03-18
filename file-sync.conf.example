@@ -1,0 +1,6 @@
+VPS_HOST="your-vps-ip"
+VPS_USER="ubuntu"
+VPS_PATH="~/outputs/files"
+SSH_KEY="$HOME/.ssh/id_ed25519"
+LOCAL_DIR="$HOME/uploads/files"
+FILE_TYPES=""   # 留空同步所有文件，或指定后缀如 "png,jpg,pdf,md"
