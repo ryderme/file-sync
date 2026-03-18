@@ -1,0 +1,5 @@
+VPS_HOST="your-vps-ip"
+VPS_USER="ubuntu"
+VPS_PATH="~/outputs/images"
+SSH_KEY="$HOME/.ssh/id_ed25519"
+LOCAL_DIR="$HOME/uploads/images"
