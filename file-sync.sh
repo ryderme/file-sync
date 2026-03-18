@@ -4,9 +4,9 @@ set -uo pipefail
 # ── Default config ─────────────────────────────────────────────────────────────
 VPS_HOST=""
 VPS_USER="ubuntu"
-VPS_PATH="~/outputs/files"
+VPS_PATH="~/uploads"
 SSH_KEY="$HOME/.ssh/id_ed25519"
-LOCAL_DIR="$HOME/uploads/files"
+LOCAL_DIR="$HOME/uploads"
 FILE_TYPES=""   # 留空则同步所有文件，否则填逗号分隔的后缀，如 "png,jpg,pdf"
 
 # Load user config (overrides defaults)
