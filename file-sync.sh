@@ -10,14 +10,54 @@ LOCAL_DIR="$HOME/uploads"
 FILE_TYPES=""   # 留空则同步所有文件，否则填逗号分隔的后缀，如 "png,jpg,pdf"
 
 # Load user config (overrides defaults)
-CONFIG_FILE="$HOME/.file-sync.conf"
-[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_CONFIG_FILE="$SCRIPT_DIR/file-sync.conf"
+HOME_CONFIG_FILE="$HOME/.file-sync.conf"
+CONFIG_FILE="$PROJECT_CONFIG_FILE"
+
+if [[ -f "$PROJECT_CONFIG_FILE" ]]; then
+  source "$PROJECT_CONFIG_FILE"
+elif [[ -f "$HOME_CONFIG_FILE" ]]; then
+  CONFIG_FILE="$HOME_CONFIG_FILE"
+  source "$HOME_CONFIG_FILE"
+fi
 
 UPLOADED_LOG="$LOCAL_DIR/.uploaded"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 log() { echo "[file-sync] $*"; }
 err() { echo "[file-sync] ERROR: $*" >&2; exit 1; }
+REMOTE_DIR_READY=0
+
+find_fswatch() {
+  if command -v fswatch >/dev/null 2>&1; then
+    command -v fswatch
+    return 0
+  fi
+
+  local candidates=(
+    "/opt/homebrew/bin/fswatch"
+    "/usr/local/bin/fswatch"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_remote_dir() {
+  [[ "$REMOTE_DIR_READY" -eq 1 ]] && return 0
+
+  ssh -i "$SSH_KEY" -o BatchMode=yes "${VPS_USER}@${VPS_HOST}" "mkdir -p ${VPS_PATH}" \
+    || err "failed to create remote directory: ${VPS_USER}@${VPS_HOST}:${VPS_PATH}"
+
+  REMOTE_DIR_READY=1
+}
 
 check_config() {
   [[ -z "$VPS_HOST" ]] && err "VPS_HOST not set. Create $CONFIG_FILE (see file-sync.conf.example)"
@@ -54,7 +94,7 @@ rename_files() {
     [[ "$name" =~ ^[0-9]{8}_[0-9]{6} ]] && continue
 
     local ext="${name##*.}"
-    ext="${ext,,}"  # lowercase extension
+    ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
 
     # Use file modification time as timestamp
     local ts
@@ -82,6 +122,8 @@ upload_files() {
   local uploaded=0
   local failed=0
 
+  ensure_remote_dir
+
   while IFS= read -r -d '' file; do
     local name
     name=$(basename "$file")
@@ -90,7 +132,7 @@ upload_files() {
     grep -qxF "$name" "$UPLOADED_LOG" 2>/dev/null && continue
 
     log "uploading: $name"
-    if scp -i "$SSH_KEY" -q "$file" "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/"; then
+    if RSYNC_RSH="ssh -i $SSH_KEY" rsync -az "$file" "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/"; then
       echo "$name" >> "$UPLOADED_LOG"
       uploaded=$((uploaded + 1))
     else
@@ -114,10 +156,13 @@ sync_all() {
 # ── Watch ──────────────────────────────────────────────────────────────────────
 watch_mode() {
   check_config
-  command -v fswatch &>/dev/null || err "fswatch not installed. Run: brew install fswatch"
+  local fswatch_bin
+  fswatch_bin=$(find_fswatch) || err "fswatch not installed. Run: brew install fswatch"
   log "watching $LOCAL_DIR ..."
   log "press Ctrl+C to stop"
-  fswatch -o --event Created --event Renamed "$LOCAL_DIR" | while read -r; do
+  "$fswatch_bin" -o "$LOCAL_DIR" | while read -r; do
+    # Give applications a moment to finish writing before renaming/uploading.
+    sleep 1
     sync_all
   done
 }
