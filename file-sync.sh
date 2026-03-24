@@ -28,6 +28,7 @@ UPLOADED_LOG="$LOCAL_DIR/.uploaded"
 log() { echo "[file-sync] $*"; }
 err() { echo "[file-sync] ERROR: $*" >&2; exit 1; }
 REMOTE_DIR_READY=0
+CONNECTION_INFO_LOGGED=0
 
 find_fswatch() {
   if command -v fswatch >/dev/null 2>&1; then
@@ -63,6 +64,33 @@ check_config() {
   [[ -z "$VPS_HOST" ]] && err "VPS_HOST not set. Create $CONFIG_FILE (see file-sync.conf.example)"
   mkdir -p "$LOCAL_DIR"
   touch "$UPLOADED_LOG"
+}
+
+log_connection_target() {
+  [[ "$CONNECTION_INFO_LOGGED" -eq 1 ]] && return 0
+
+  log "target config: user=${VPS_USER} host=${VPS_HOST} path=${VPS_PATH} key=${SSH_KEY}"
+
+  if command -v ssh >/dev/null 2>&1; then
+    local ssh_resolved
+    ssh_resolved=$(ssh -G -i "$SSH_KEY" "${VPS_USER}@${VPS_HOST}" 2>/dev/null || true)
+
+    if [[ -n "$ssh_resolved" ]]; then
+      local resolved_host resolved_user resolved_port resolved_key resolved_proxy
+      resolved_host=$(printf '%s\n' "$ssh_resolved" | awk '$1=="hostname" {print $2; exit}')
+      resolved_user=$(printf '%s\n' "$ssh_resolved" | awk '$1=="user" {print $2; exit}')
+      resolved_port=$(printf '%s\n' "$ssh_resolved" | awk '$1=="port" {print $2; exit}')
+      resolved_key=$(printf '%s\n' "$ssh_resolved" | awk '$1=="identityfile" {print $2; exit}')
+      resolved_proxy=$(printf '%s\n' "$ssh_resolved" | awk '$1=="proxycommand" {$1=""; sub(/^ /, ""); print; exit}')
+
+      log "ssh resolved: host=${resolved_host:-unknown} user=${resolved_user:-unknown} port=${resolved_port:-unknown} identity=${resolved_key:-default}"
+      [[ -n "${resolved_proxy:-}" ]] && log "ssh proxycommand: ${resolved_proxy}"
+    else
+      log "ssh resolved: unavailable"
+    fi
+  fi
+
+  CONNECTION_INFO_LOGGED=1
 }
 
 find_files() {
@@ -149,6 +177,7 @@ upload_files() {
 # ── Sync ───────────────────────────────────────────────────────────────────────
 sync_all() {
   check_config
+  log_connection_target
   rename_files
   upload_files
 }
